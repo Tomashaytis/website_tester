@@ -1,2 +1,2 @@
-# website_tester
+# Website Tester
 Website tester based on Python.
