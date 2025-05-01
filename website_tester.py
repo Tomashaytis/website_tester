@@ -1,6 +1,10 @@
-from typing import List
 import asyncio
-import requests
+import httpx
+import statistics
+from tqdm import tqdm
+from tqdm.asyncio import tqdm_asyncio
+from typing import List, Tuple, Optional
+from datetime import datetime
 
 class WebsiteTester:
     def __init__(self, url, rps = 1, duration = 1, payload = ""):
@@ -8,11 +12,11 @@ class WebsiteTester:
         self._rps = rps
         self._duration = duration
         self._payload = payload
-        self._test_results = {}
-        self.init_test_results()
+        self._metrics = {}
+        self.init_metrics()
 
-    def init_test_results(self):
-        self._test_results = {
+    def init_metrics(self):
+        self._metrics = {
             'total': self._rps * self._duration,
             'timestamps': {
                 'start': None,
@@ -21,6 +25,7 @@ class WebsiteTester:
             },
             'success': 0,
             'failure': {
+                'all': 0,
                 'timeout': 0,
                 'connection': 0,
                 'http': 0,
@@ -43,7 +48,7 @@ class WebsiteTester:
                     '300-500ms': 0,
                     '500-1000ms': 0,
                     '1-2s': 0,
-                    '>2s': 0,
+                    '2-?s': 0,
                 }
             },
             'status': {
@@ -54,40 +59,115 @@ class WebsiteTester:
                 '4xx': 0,
                 '5xx': 0,
             },
-            'load': {
-                'rps_achieved': 0,
-                'concurrency': 0,
-                'throughput': 0,
-            },
             'network': {
-                'dns_time': 0,
-                'connect_time': 0,
-                'ttfb': 0,
                 'download_speed': 0,
-                'upload_size': 0,
                 'download_size': 0,
-            },
-            'misc': {
-                'retries': 0,
                 'redirects': 0,
                 'cached': 0,
             }
         }
 
-    async def send_test_request(self) -> requests.Response:
-        return requests.get(self._url, params=self._payload)
+    async def send_test_request(self, client: httpx.AsyncClient) -> Tuple[Optional[httpx.Response], float]:
+        response = None
+        start = datetime.now()
+        try:
+            response = await client.get(self._url, params=self._payload, follow_redirects=True)
+        except httpx.TimeoutException:
+            self._metrics['failure']['timeout'] += 1
+            self._metrics['failure']['all'] += 1
+        except httpx.ConnectError as err:
+            if "SSL" in str(err):
+                self._metrics['failure']['ssl'] += 1
+            else:
+                self._metrics['failure']['connection'] += 1
+            self._metrics['failure']['all'] += 1
+        except httpx.RemoteProtocolError:
+            self._metrics['failure']['redirects'] += 1
+            self._metrics['failure']['all'] += 1
+        except httpx.RequestError as e:
+            self._metrics['failure']['other'] += 1
+            self._metrics['failure']['all'] += 1
+        end = datetime.now()
+        time_delta = end - start
+        return response, time_delta.total_seconds()
 
-    def analyze_responses(self, responses: List[requests.Response]):
-        pass
+    def analyze_responses(self, responses: List[Tuple[Optional[httpx.Response], float]]):
+        download_sizes = []
+        times = []
+        for response, time in responses:
+            if response is None:
+                continue
+            times.append(time)
+            if time < 0.1:
+                self._metrics['time']['histogram']['0-100ms'] += 1
+            elif time < 0.3:
+                self._metrics['time']['histogram']['100-300ms'] += 1
+            elif time < 0.5:
+                self._metrics['time']['histogram']['300-500ms'] += 1
+            elif time < 1:
+                self._metrics['time']['histogram']['500-1000ms'] += 1
+            elif time < 2:
+                self._metrics['time']['histogram']['1-2s'] += 1
+            else:
+                self._metrics['time']['histogram']['2-?s'] += 1
 
-    async def send_test_requests(self) -> List[requests.Response]:
-        responses = []
-        for i in range(self._duration):
+            download_sizes.append(len(response.content))
+            self._metrics['network']['redirects'] = len(response.history)
+            if 'from-cache' in response.headers.get('X-Cache', '').lower():
+                self._metrics['misc']['cached'] += 1
+
+            self._metrics['success'] += response.is_success
+            self._metrics['failure']['http'] += response.is_error
+            if 100 <= response.status_code < 200:
+                self._metrics['status']['1xx'] += 1
+            if 200 <= response.status_code < 300:
+                self._metrics['status']['2xx'] += 1
+            if 300 <= response.status_code < 400:
+                self._metrics['status']['3xx'] += 1
+            if 400 <= response.status_code < 500:
+                self._metrics['status']['4xx'] += 1
+            if 500 <= response.status_code < 600:
+                self._metrics['status']['5xx'] += 1
+            if response.status_code in self._metrics['status']['codes']:
+                self._metrics['status']['codes'][response.status_code] += 1
+            else:
+                self._metrics['status']['codes'][response.status_code] = 1
+
+        self._metrics['time']['min'] = min(times)
+        self._metrics['time']['max'] = max(times)
+        self._metrics['time']['mean'] = statistics.mean(times)
+        self._metrics['time']['median'] = statistics.median(times)
+        quantile = statistics.quantiles(times, n=100)
+        self._metrics['time']['p75'] = quantile[74]
+        self._metrics['time']['p90'] = quantile[89]
+        self._metrics['time']['p95'] = quantile[94]
+        self._metrics['time']['p99'] = quantile[98]
+
+        download_time = statistics.mean(times)
+        download_size = int(statistics.mean(download_sizes))
+        self._metrics['network']['download_size'] = download_size
+        self._metrics['network']['download_speed'] = (download_size / 1024 / 1024) / download_time
+
+    async def send_test_requests(self) -> List[Tuple[Optional[httpx.Response], float]]:
+        self._metrics['timestamps']['start'] = datetime.now()
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
             tasks = []
-            for j in range(self._rps):
-                tasks.append(self.send_test_request())
+            for i in tqdm(range(self._duration), desc='requesting'):
+                for j in range(self._rps):
+                    tasks.append(self.send_test_request(client))
+                await asyncio.sleep(1)
+            responses = await tqdm_asyncio.gather(*tasks, desc='receiving')
 
-            responses.extend(await asyncio.gather(*tasks))
-            await asyncio.sleep(1)
+        self._metrics['timestamps']['end'] = datetime.now()
+        time_delta = self._metrics['timestamps']['end'] - self._metrics['timestamps']['start']
+        self._metrics['timestamps']['duration'] = time_delta.total_seconds()
+
         return responses
+
+    def start_testing(self):
+        self.init_metrics()
+        responses = asyncio.run(self.send_test_requests())
+        self.analyze_responses(responses)
+        print(self._metrics)
 
