@@ -7,11 +7,12 @@ from typing import List, Tuple, Optional
 from datetime import datetime
 
 class WebsiteTester:
-    def __init__(self, url, rps = 1, duration = 1, payload = ""):
+    def __init__(self, url: str, rps: int = 1, duration: int = 1, timeout: int = 10, payload = ""):
         self._url = url
         self._rps = rps
         self._duration = duration
         self._payload = payload
+        self._timeout = timeout
         self._metrics = {}
         self.init_metrics()
 
@@ -118,6 +119,7 @@ class WebsiteTester:
 
             self._metrics['success'] += response.is_success
             self._metrics['failure']['http'] += response.is_error
+            self._metrics['failure']['all'] += response.is_error
             if 100 <= response.status_code < 200:
                 self._metrics['status']['1xx'] += 1
             if 200 <= response.status_code < 300:
@@ -129,9 +131,9 @@ class WebsiteTester:
             if 500 <= response.status_code < 600:
                 self._metrics['status']['5xx'] += 1
             if response.status_code in self._metrics['status']['codes']:
-                self._metrics['status']['codes'][response.status_code] += 1
+                self._metrics['status']['codes'][response.status_code]['count'] += 1
             else:
-                self._metrics['status']['codes'][response.status_code] = 1
+                self._metrics['status']['codes'][response.status_code] = {'paraphrase': response.reason_phrase, 'count': 1}
 
         self._metrics['time']['min'] = min(times)
         self._metrics['time']['max'] = max(times)
@@ -144,20 +146,22 @@ class WebsiteTester:
         self._metrics['time']['p99'] = quantile[98]
 
         download_time = statistics.mean(times)
-        download_size = int(statistics.mean(download_sizes))
+        download_size = int(statistics.mean(download_sizes)) / 1024 / 1024
         self._metrics['network']['download_size'] = download_size
-        self._metrics['network']['download_speed'] = (download_size / 1024 / 1024) / download_time
+        self._metrics['network']['download_speed'] = download_size / download_time
+
+        self._metrics['status']['codes'] = dict(sorted(self._metrics['status']['codes'].items()))
 
     async def send_test_requests(self) -> List[Tuple[Optional[httpx.Response], float]]:
         self._metrics['timestamps']['start'] = datetime.now()
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
             tasks = []
-            for i in tqdm(range(self._duration), desc='requesting'):
+            for i in tqdm(range(self._duration), desc='Requesting'):
                 for j in range(self._rps):
                     tasks.append(self.send_test_request(client))
                 await asyncio.sleep(1)
-            responses = await tqdm_asyncio.gather(*tasks, desc='receiving')
+            responses = await tqdm_asyncio.gather(*tasks, desc='Receiving')
 
         self._metrics['timestamps']['end'] = datetime.now()
         time_delta = self._metrics['timestamps']['end'] - self._metrics['timestamps']['start']
@@ -169,5 +173,59 @@ class WebsiteTester:
         self.init_metrics()
         responses = asyncio.run(self.send_test_requests())
         self.analyze_responses(responses)
-        print(self._metrics)
+        self.print_metrics()
+
+    def print_metrics(self):
+        print(f'Target URL: {self._url}')
+        print(f'Test duration: {self._duration}s, RPS: {self._rps} (total {self._metrics['total']} requests)')
+        print(f'Timeout for responses: {self._timeout}s')
+        print()
+
+        print('=== Request Summary ===')
+        print(f'Total:\t\t{self._metrics['total']}')
+        print(f'Success:\t{self._metrics['success']}')
+        print(f'Failure:\t{self._metrics['failure']['all']}')
+        if self._metrics['failure']['timeout'] != 0:
+            print(f'- Timeout errors:\t{self._metrics['failure']['timeout']}')
+        if self._metrics['failure']['connection'] != 0:
+            print(f'- Connection errors:\t{self._metrics['failure']['connection']}')
+        if self._metrics['failure']['http'] != 0:
+            print(f'- HTTP errors:\t\t{self._metrics['failure']['http']}')
+        if self._metrics['failure']['ssl'] != 0:
+            print(f'- SSL errors:\t\t{self._metrics['failure']['ssl']}')
+        if self._metrics['failure']['redirect'] != 0:
+            print(f'- Redirect errors:\t{self._metrics['failure']['redirect']}')
+        if self._metrics['failure']['other'] != 0:
+            print(f'- Other errors:\t\t{self._metrics['failure']['other']}')
+        print()
+
+        print('=== Response Time (s) ===')
+        print(f'Min:\t{self._metrics['time']['min']}')
+        print(f'Max:\t{self._metrics['time']['max']}')
+        print(f'Mean:\t{self._metrics['time']['mean']}')
+        print(f'Median:\t{self._metrics['time']['median']}')
+        print(f'p75:\t{self._metrics['time']['p75']}')
+        print(f'p90:\t{self._metrics['time']['p90']}')
+        print(f'p95:\t{self._metrics['time']['p95']}')
+        print(f'p99:\t{self._metrics['time']['p99']}')
+        print()
+
+        print('=== Status Code Distribution ===')
+        print(f'http (1xx):\t{self._metrics['status']['1xx']}')
+        print(f'http (2xx):\t{self._metrics['status']['2xx']}')
+        print(f'http (3xx):\t{self._metrics['status']['3xx']}')
+        print(f'http (4xx):\t{self._metrics['status']['4xx']}')
+        print(f'http (5xx):\t{self._metrics['status']['5xx']}')
+        print('Details:')
+        for code in self._metrics['status']['codes']:
+            print(f'- {code}:\t{self._metrics['status']['codes'][code]['count']} '
+                  f'({self._metrics['status']['codes'][code]['paraphrase']})')
+        print()
+
+        print('=== Network Parameters ===')
+        print(f'Download size:\t{self._metrics['network']['download_size']} Mb')
+        print(f'Download speed:\t{self._metrics['network']['download_speed']} Mb/s')
+        print(f'Redirects count:\t{self._metrics['network']['redirects']}')
+        print(f'Cached responses:\t{self._metrics['network']['cached']}')
+
 
