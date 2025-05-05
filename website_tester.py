@@ -154,8 +154,10 @@ class WebsiteTester:
 
     async def send_test_requests(self) -> List[Tuple[Optional[httpx.Response], float]]:
         self._metrics['timestamps']['start'] = datetime.now()
+        timeout = httpx.Timeout(self._timeout)
+        limits = httpx.Limits(max_connections=100, max_keepalive_connections=50)
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             tasks = []
             for i in tqdm(range(self._duration), desc='Requesting'):
                 for j in range(self._rps):
@@ -173,6 +175,7 @@ class WebsiteTester:
         self.init_metrics()
         responses = asyncio.run(self.send_test_requests())
         self.analyze_responses(responses)
+        print()
         self.print_metrics()
 
     def print_metrics(self):
@@ -193,21 +196,21 @@ class WebsiteTester:
             print(f'- HTTP errors:\t\t{self._metrics['failure']['http']}')
         if self._metrics['failure']['ssl'] != 0:
             print(f'- SSL errors:\t\t{self._metrics['failure']['ssl']}')
-        if self._metrics['failure']['redirect'] != 0:
-            print(f'- Redirect errors:\t{self._metrics['failure']['redirect']}')
+        if self._metrics['failure']['redirects'] != 0:
+            print(f'- Redirect errors:\t{self._metrics['failure']['redirects']}')
         if self._metrics['failure']['other'] != 0:
             print(f'- Other errors:\t\t{self._metrics['failure']['other']}')
         print()
 
         print('=== Response Time (s) ===')
-        print(f'Min:\t{self._metrics['time']['min']}')
-        print(f'Max:\t{self._metrics['time']['max']}')
-        print(f'Mean:\t{self._metrics['time']['mean']}')
-        print(f'Median:\t{self._metrics['time']['median']}')
-        print(f'p75:\t{self._metrics['time']['p75']}')
-        print(f'p90:\t{self._metrics['time']['p90']}')
-        print(f'p95:\t{self._metrics['time']['p95']}')
-        print(f'p99:\t{self._metrics['time']['p99']}')
+        print(f'Min:\t{self._metrics['time']['min']:.3f}')
+        print(f'Max:\t{self._metrics['time']['max']:.3f}')
+        print(f'Mean:\t{self._metrics['time']['mean']:.3f}')
+        print(f'Median:\t{self._metrics['time']['median']:.3f}')
+        print(f'p75:\t{self._metrics['time']['p75']:.3f}')
+        print(f'p90:\t{self._metrics['time']['p90']:.3f}')
+        print(f'p95:\t{self._metrics['time']['p95']:.3f}')
+        print(f'p99:\t{self._metrics['time']['p99']:.3f}')
         print()
 
         print('=== Status Code Distribution ===')
@@ -218,13 +221,13 @@ class WebsiteTester:
         print(f'http (5xx):\t{self._metrics['status']['5xx']}')
         print('Details:')
         for code in self._metrics['status']['codes']:
-            print(f'- {code}:\t{self._metrics['status']['codes'][code]['count']} '
+            print(f'- {code}:\t{self._metrics['status']['codes'][code]['count']}\t'
                   f'({self._metrics['status']['codes'][code]['paraphrase']})')
         print()
 
         print('=== Network Parameters ===')
-        print(f'Download size:\t{self._metrics['network']['download_size']} Mb')
-        print(f'Download speed:\t{self._metrics['network']['download_speed']} Mb/s')
+        print(f'Download size:\t{self._metrics['network']['download_size']:.3f} Mb')
+        print(f'Download speed:\t{self._metrics['network']['download_speed']:.3f} Mb/s')
         print(f'Redirects count:\t{self._metrics['network']['redirects']}')
         print(f'Cached responses:\t{self._metrics['network']['cached']}')
 
