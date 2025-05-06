@@ -76,6 +76,7 @@ class WebsiteTester:
         except httpx.TimeoutException:
             self._metrics['failure']['timeout'] += 1
             self._metrics['failure']['all'] += 1
+            return response, self._timeout
         except httpx.ConnectError as err:
             if "SSL" in str(err):
                 self._metrics['failure']['ssl'] += 1
@@ -96,9 +97,9 @@ class WebsiteTester:
         download_sizes = []
         times = []
         for response, time in responses:
+            times.append(time)
             if response is None:
                 continue
-            times.append(time)
             if time < 0.1:
                 self._metrics['time']['histogram']['0-100ms'] += 1
             elif time < 0.3:
@@ -145,8 +146,9 @@ class WebsiteTester:
         self._metrics['time']['p95'] = quantile[94]
         self._metrics['time']['p99'] = quantile[98]
 
+
         download_time = statistics.mean(times)
-        download_size = int(statistics.mean(download_sizes)) / 1024 / 1024
+        download_size = int(statistics.mean(download_sizes)) / 1024 / 1024 if len(download_sizes) != 0  else 0
         self._metrics['network']['download_size'] = download_size
         self._metrics['network']['download_speed'] = download_size / download_time
 
@@ -155,14 +157,16 @@ class WebsiteTester:
     async def send_test_requests(self) -> List[Tuple[Optional[httpx.Response], float]]:
         self._metrics['timestamps']['start'] = datetime.now()
         timeout = httpx.Timeout(self._timeout)
-        limits = httpx.Limits(max_connections=100, max_keepalive_connections=50)
 
-        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             tasks = []
-            for i in tqdm(range(self._duration), desc='Requesting'):
-                for j in range(self._rps):
+            for _ in tqdm(range(self._duration), desc='Requesting'):
+                start = datetime.now()
+                for i in range(self._rps):
                     tasks.append(self.send_test_request(client))
-                await asyncio.sleep(1)
+                    time_delta = datetime.now() - start
+                    if time_delta.total_seconds() < i / self._rps:
+                        await asyncio.sleep(i / self._rps - time_delta.total_seconds())
             responses = await tqdm_asyncio.gather(*tasks, desc='Receiving')
 
         self._metrics['timestamps']['end'] = datetime.now()
@@ -184,7 +188,7 @@ class WebsiteTester:
         print(f'Timeout for responses: {self._timeout}s')
         print()
 
-        print('=== Request Summary ===')
+        print('<=== Request Summary ===>')
         print(f'Total:\t\t{self._metrics['total']}')
         print(f'Success:\t{self._metrics['success']}')
         print(f'Failure:\t{self._metrics['failure']['all']}')
@@ -202,7 +206,7 @@ class WebsiteTester:
             print(f'- Other errors:\t\t{self._metrics['failure']['other']}')
         print()
 
-        print('=== Response Time (s) ===')
+        print('<=== Response Time (s) ===>')
         print(f'Min:\t{self._metrics['time']['min']:.3f}')
         print(f'Max:\t{self._metrics['time']['max']:.3f}')
         print(f'Mean:\t{self._metrics['time']['mean']:.3f}')
@@ -213,7 +217,7 @@ class WebsiteTester:
         print(f'p99:\t{self._metrics['time']['p99']:.3f}')
         print()
 
-        print('=== Status Code Distribution ===')
+        print('<=== Status Code Distribution ===>')
         print(f'http (1xx):\t{self._metrics['status']['1xx']}')
         print(f'http (2xx):\t{self._metrics['status']['2xx']}')
         print(f'http (3xx):\t{self._metrics['status']['3xx']}')
@@ -225,7 +229,7 @@ class WebsiteTester:
                   f'({self._metrics['status']['codes'][code]['paraphrase']})')
         print()
 
-        print('=== Network Parameters ===')
+        print('<=== Network Parameters ===>')
         print(f'Download size:\t{self._metrics['network']['download_size']:.3f} Mb')
         print(f'Download speed:\t{self._metrics['network']['download_speed']:.3f} Mb/s')
         print(f'Redirects count:\t{self._metrics['network']['redirects']}')
