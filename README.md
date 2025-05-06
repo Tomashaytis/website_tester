@@ -7,7 +7,7 @@ Console
 pyhon test_website.py --url http://example.com/ --rps 100 --duration 5 --timeout 10
 ```
 
-Config
+Configuration file
 ```
 pyhon test_website.py --config config.json
 ```
