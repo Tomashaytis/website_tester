@@ -6,8 +6,24 @@ from tqdm.asyncio import tqdm_asyncio
 from typing import List, Tuple, Optional
 from datetime import datetime
 
+"""
+Module with class WebsiteTester for website testing
+"""
+
 class WebsiteTester:
+    """
+    Class WebsiteTester for website testing
+    """
+
     def __init__(self, url: str, rps: int = 1, duration: int = 1, timeout: int = 10, payload = ""):
+        """
+        Constructor for WebsiteTester
+        :param url: target url
+        :param rps: test RPS
+        :param duration: test duration (s)
+        :param timeout: timeout for responses (s)
+        :param payload: payload for requests
+        """
         self._url = url
         self._rps = rps
         self._duration = duration
@@ -17,6 +33,9 @@ class WebsiteTester:
         self.init_metrics()
 
     def init_metrics(self):
+        """
+        Metrics initialization
+        """
         self._metrics = {
             'total': self._rps * self._duration,
             'timestamps': {
@@ -69,6 +88,11 @@ class WebsiteTester:
         }
 
     async def send_test_request(self, client: httpx.AsyncClient) -> Tuple[Optional[httpx.Response], float]:
+        """
+        Sending test request to website
+        :param client: httpx async client
+        :return: response and elapsed time
+        """
         response = None
         start = datetime.now()
         try:
@@ -94,6 +118,10 @@ class WebsiteTester:
         return response, time_delta.total_seconds()
 
     def analyze_responses(self, responses: List[Tuple[Optional[httpx.Response], float]]):
+        """
+        Analyzing responses and metric aggregation
+        :param responses: list of responses and elapsed times
+        """
         download_sizes = []
         times = []
         for response, time in responses:
@@ -146,7 +174,6 @@ class WebsiteTester:
         self._metrics['time']['p95'] = quantile[94]
         self._metrics['time']['p99'] = quantile[98]
 
-
         download_time = statistics.mean(times)
         download_size = int(statistics.mean(download_sizes)) / 1024 / 1024 if len(download_sizes) != 0  else 0
         self._metrics['network']['download_size'] = download_size
@@ -155,6 +182,10 @@ class WebsiteTester:
         self._metrics['status']['codes'] = dict(sorted(self._metrics['status']['codes'].items()))
 
     async def send_test_requests(self) -> List[Tuple[Optional[httpx.Response], float]]:
+        """
+        Sending many requests to website
+        :return: list of responses and elapsed times
+        """
         self._metrics['timestamps']['start'] = datetime.now()
         timeout = httpx.Timeout(self._timeout)
 
@@ -176,6 +207,9 @@ class WebsiteTester:
         return responses
 
     def start_testing(self):
+        """
+        Launch testing website
+        """
         self.init_metrics()
         responses = asyncio.run(self.send_test_requests())
         self.analyze_responses(responses)
@@ -183,6 +217,9 @@ class WebsiteTester:
         self.print_metrics()
 
     def print_metrics(self):
+        """
+        Outputting aggregated metrics to console
+        """
         print(f'Target URL: {self._url}')
         print(f'Test duration: {self._duration}s, RPS: {self._rps} (total {self._metrics['total']} requests)')
         print(f'Timeout for responses: {self._timeout}s')

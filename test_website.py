@@ -2,14 +2,18 @@ import json
 import argparse
 from website_tester import WebsiteTester
 
+"""
+Script for running website testing
+"""
+
 if __name__ == '__main__':
     params = {}
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', type=str, default=None, help='path to config file')
-    parser.add_argument('-u', '--url', type=str, default=None, help='URL')
-    parser.add_argument('-r', '--rps', type=int, default=5, help='test RPS')
+    parser.add_argument('-u', '--url', type=str, default=None, help='target URL')
+    parser.add_argument('-r', '--rps', type=int, default=100, help='test RPS')
     parser.add_argument('-d', '--duration', type=int, default=5, help='test duration (s)')
-    parser.add_argument('-t', '--timeout', type=int, default=5, help='timeout for responses (s)')
+    parser.add_argument('-t', '--timeout', type=int, default=10, help='timeout for responses (s)')
     args = parser.parse_args()
 
     if args.config is not None:
