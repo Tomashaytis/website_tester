@@ -4,12 +4,12 @@ Website tester based on Python.
 ## Quick start
 Console
 ```
-pyhon test_website --url http://example.com/ --rps 100 --duration 5 --timeout 10
+pyhon test_website.py --url http://example.com/ --rps 100 --duration 5 --timeout 10
 ```
 
 Config
 ```
-pyhon test_website --config config.json
+pyhon test_website.py --config config.json
 ```
 
 ## Example of analysis results
